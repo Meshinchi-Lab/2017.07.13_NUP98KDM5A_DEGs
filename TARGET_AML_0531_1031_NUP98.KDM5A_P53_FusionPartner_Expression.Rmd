@@ -1,0 +1,295 @@
+---
+title: "TP53/KDM5A in Adult and Pediatric AML"
+author: "Jenny Smith"
+date: "April 6, 2018"
+output: html_document
+---
+
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height = 8, fig.width = 10)
+knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2017.07.13_NUP98KDM5A_DEGs/')
+```
+
+
+
+```{r message=FALSE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(stringr)
+library(reshape2)
+library(tidyr)
+library(tibble)
+library(ggpubr)
+getwd()
+```
+
+
+```{r}
+source("~/scripts/RNAseq_Analysis/MSLN_waterfallplots/Waterfall_Barplot_Function_2017.05.22.r")
+source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/ggplot_Themes_Function.r")
+```
+
+```{r}
+forDist <- function(expnData,pheno,genes){
+  
+  regex <- paste(paste0(genes,"$"), collapse = "|" )
+  
+  df <- expnData %>%
+    rownames_to_column("gene") %>%
+    filter(grepl(regex, gene)) %>%
+    gather(var, value,-gene) %>%
+    mutate(log2.TPM=log2(value+1)) %>%
+    inner_join(., data.frame(USI=names(pheno), Status=pheno, stringsAsFactors=FALSE), by=c("var"="USI")) 
+    # mutate(gene=factor(gene, levels=c("NUP98","KDM5A","TP53")))
+  
+  return(df)
+}
+
+```
+
+
+#Read in the CDEs 
+
+```{r}
+AML1031 <- read.csv("~/reference_mapping-files/TARGET_AML_1031_CDE_cleaned_4.18.2018.csv",
+                    stringsAsFactors = FALSE, row.names = 1)
+
+AML1031 <- AML1031 %>%
+  filter(!is.na(USI)) %>% 
+  set_rownames(.$USI)
+
+
+head(AML1031[,1:5])
+
+# dim(AML1031)
+```
+
+
+```{r}
+AML0531 <- read.csv("~/reference_mapping-files/TARGET_AML_current_asof_june30_2016_UPDATED_CLEAN_4.5.18.csv", 
+                    stringsAsFactors = FALSE)
+
+row.names(AML0531) <- AML0531$TARGET.USI.1
+head(AML0531[,1:5])
+# dim(AML0531) #1000 by 90
+```
+
+
+
+
+#Read in the expression data 
+
+```{r}
+LD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_TPM.csv", stringsAsFactors = FALSE, row.names = 1)
+
+head(LD.0531[,1:5])
+# dim(LD.0531) #494 samples
+```
+
+```{r}
+HD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_TPM_Aug2014.csv",
+                    stringsAsFactors = FALSE, row.names = 1)
+
+colnames(HD.0531) <- str_split_fixed(colnames(HD.0531), "\\.", n=5)[,3]
+
+head(HD.0531[,1:5])
+# dim(HD.0531) 51,482 genes by 160 samples
+```
+
+
+```{r}
+HD.1031 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_TPM.csv", 
+                    stringsAsFactors = FALSE, row.names = 1)
+
+head(HD.1031[,1:5])
+# dim(HD.1031) #1111 samples
+```
+
+
+
+```{r}
+TCGA_Targ <- get(load("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TcgaTargetGtex_NormBlood_AML_rsem_geneSymbol_dupGenesRemoved_tpm.RData"))
+
+head(TCGA_Targ[,1:5])
+# dim(TCGA_Targ) 58,531 and 738  samples
+```
+
+```{r}
+grep("TP53$", rownames(LD.0531), value=TRUE)
+grep("KDM5A$", rownames(LD.0531), value=TRUE)
+grep("NUP98$", rownames(LD.0531), value=TRUE)
+```
+
+
+#Define Groups 
+
+```{r}
+colNames <- unique(c(colnames(LD.0531),colnames(HD.1031)))
+
+NBM <- rep("NBM", length(grep("^BM|^RO", colNames))) %>%
+  set_names(grep("^BM|^RO", colNames,  value=TRUE))
+
+# NBM
+```
+
+```{r}
+IDs.0531 <- GroupIDs(clinData = AML0531, col = "NUP98.KDM5A")
+pheno.0531 <- phenoVectors_MultipleGroups(IDs.0531) %>% c(., NBM)
+table(pheno.0531)
+```
+
+```{r}
+IDs.1031 <- GroupIDs(clinData = AML1031, col = "NUP98.KDM5A")
+pheno.1031 <- phenoVectors_MultipleGroups(IDs.1031) %>% c(., NBM)
+table(pheno.1031)
+```
+
+
+#Waterfall plots with TP53
+
+```{r}
+# tiff("TP53_LowDepth_0531_TPM_waterfallplot.tiff", height = 5, width = 8, units = "in", res=600)
+waterfallPlot(LD.0531, "TP53", unit="TPM", phenoVector = pheno.0531, returnData = FALSE) + 
+  scale_fill_brewer(palette = "Set1") + 
+  labs(title="TP53 RNA-Seq Expression AAML0531") +
+  ylim(0,100)
+# dev.off()
+```
+
+
+```{r}
+quantile(as.numeric(LD.0531["TP53",]))
+```
+
+```{r}
+# tiff("TP53_1031_TPM_waterfallplot.tiff", height = 5, width = 8, units = "in", res=600)
+waterfallPlot(HD.1031, "TP53", unit="TPM", phenoVector = pheno.1031) +
+  ylim(0,100) +
+  scale_fill_brewer(palette = "Set1") + 
+  labs(title="TP53 RNA-Seq Expression AAML1031") 
+# dev.off()
+```
+
+```{r}
+quantile(as.numeric(HD.1031["TP53",]))
+# log2 <- log2(as.numeric(HD.1031["TP53",])+1)
+# quantile(log2)
+```
+
+
+```{r}
+pheno.toil <- ifelse(grepl("GTEX", colnames(subset)), "Normal.WholeBlood", 
+                     ifelse(grepl("TARGET", colnames(subset)), "TARGET.AML", "TCGA.AML")) %>%
+  set_names(colnames(subset))
+
+table(pheno.toil)
+```
+
+```{r}
+
+TAR.TCGA.GTEX <- waterfallPlot(expnMatrix = subset,
+                               geneName = "TP53",
+                               phenoVector =  pheno.toil,
+                               unit="TPM", 
+                               returnData = TRUE) 
+
+# tiff("TP53_TCGA_TPM_waterfallplot.tiff", height = 5, width = 8, units = "in", res=600)
+TAR.TCGA.GTEX$Plot +  ylim(0,8) +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(title="TP53 RNA-Seq Expression TARGET, TCGA, and GTEX")
+# dev.off()
+```
+
+```{r}
+TAR.TCGA.GTEX$Data %>% 
+  group_by(Status) %>%
+  summarise_at(vars(val), funs(mean,median,max,min))
+  
+```
+
+
+#Waterfall plots with KDM5A
+
+```{r}
+# tiff("KDM5A_LowDepth_0531_TPM_waterfallplot.tiff", height = 5, width = 8, units = "in", res=600)
+waterfallPlot(LD.0531, "KDM5A", unit="TPM", phenoVector = pheno.0531, returnData = FALSE) + 
+  scale_fill_brewer(palette = "Set1") + 
+  labs(title="KDM5A RNA-Seq Expression AAML0531") +
+  ylim(0,150)
+# dev.off()
+```
+
+```{r}
+quantile(as.numeric(LD.0531["KDM5A",]))
+```
+
+```{r}
+# tiff("KDM5A_1031_TPM_waterfallplot.tiff", height = 5, width = 8, units = "in", res=600)
+waterfallPlot(HD.1031, "KDM5A", unit="TPM", phenoVector = pheno.1031) +
+  ylim(0,150) +
+  scale_fill_brewer(palette = "Set1") + 
+  labs(title="KDM5A RNA-Seq Expression AAML1031") 
+# dev.off()
+```
+
+```{r}
+quantile(as.numeric(HD.1031["KDM5A",]))
+# log2 <- log2(as.numeric(HD.1031["KDM5A",])+1)
+# quantile(log2)
+```
+
+
+
+
+#Boxplots with TCGA and TARGET  
+
+
+
+```{r}
+forDist.0531 <- forDist(expnData = LD.0531, pheno=pheno.0531, genes=c("NUP98","KDM5A","TP53")) %>%
+  mutate(gene=factor(gene, levels=c("NUP98","KDM5A","TP53")))
+
+head(forDist.0531)
+```
+
+
+```{r}
+library(ggpubr)
+compare_means(log2.TPM ~ Status, data=forDist.0531, group.by = "gene", ref.group = "No") %>%
+  arrange(gene)
+```
+
+```{r fig.width=10, fig.height=5}
+ggplot(forDist.0531, aes(x=Status, y=log2.TPM, fill=Status)) + 
+  geom_boxplot() + 
+  scale_fill_brewer(palette = "Set1") + 
+  facet_wrap(~gene, ncol=3,nrow=1) + 
+  labs(title="Expression in NUP98-KDM5A AAML0531") +
+  theme_numX
+```
+
+
+```{r}
+forDist.1031 <- forDist(expnData = HD.1031, pheno=pheno.1031, genes=c("NUP98","KDM5A","TP53")) %>%
+  mutate(gene=factor(gene, levels=c("NUP98","KDM5A","TP53")))
+
+head(forDist.1031)
+```
+
+```{r}
+compare_means(log2.TPM ~ Status, data=forDist.1031, group.by = "gene", ref.group = "No") %>%
+  arrange(gene)
+```
+
+```{r fig.width=10, fig.height=5}
+ggplot(forDist.1031, aes(x=Status, y=log2.TPM, fill=Status)) + 
+  geom_boxplot() + 
+  scale_fill_brewer(palette = "Set1") + 
+  labs(title="Expression in NUP98-KDM5A AAML1031") +
+  facet_wrap(~gene, ncol=3,nrow=1) + 
+  theme_numX
+```
+

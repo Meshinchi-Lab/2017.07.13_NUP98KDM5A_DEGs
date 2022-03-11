@@ -1,0 +1,1292 @@
+---
+title: "NUP98-KDM5A Investigation"
+author: "Jenny Smith"
+date: "January 19, 2018"
+output: html_document
+---
+
+
+Purpose: Investigate the NUP98-KDM5A transcriptional profile in Pediatric AML
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height = 8, fig.width = 10)
+knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2017.07.13_NUP98KDM5A_DEGs/')
+```
+
+
+```{r message=FALSE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(tibble)
+library(ggpubr)
+library(colorspace)
+getwd()
+```
+
+
+```{r}
+source("~/scripts/RNAseq_Analysis/Waterfallplots/Waterfall_Barplot_Function_2017.05.22.r")
+# source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline.r")
+source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline_7.05.18.r")
+```
+
+
+```{r}
+splitFusions <- function(FusionName,regex){
+  #Useful for splitting the concatenated Fusion Data from Karen Mungall. 
+  #fusions are in one column and seperated by  a semicolon
+  
+  fusions <- unlist(str_split(FusionName, "; |, "))
+  fus <- unique(grep(regex, fusions, value = TRUE))
+ 
+  if (length(fus) < 1){
+    fus <- ""
+  }else if (length(fus) == 1){
+    fus <- fus
+  }else if (length(fus) > 1){
+    fus <- unique(unlist(str_split(fus, "-")))
+    fus <- paste(fus[grep(regex,fus)], fus[-grep(regex,fus)], sep="-")
+  }
+  
+  #second check 
+  if (length(fus) > 1){
+    fus <- paste(fus, collapse=";")
+  }
+  
+  # print(fus)
+  return(fus)
+}
+
+```
+
+```{r}
+
+getFusionCounts <- function(fusions,counts,regex,pattern=";"){
+  #to be used with dplyr rowwise()
+  #cols are the columns information for fusion names (combined by a ";") and the fusion counts (combined by a ";")
+  #regex is the fusion to be grepped out
+  
+  df <- data.frame(fusions,counts)
+  
+      tempList <- sapply(df, str_split, pattern=pattern) #split all columns into a list of character vectors
+      charPosition <- grep(regex, gsub(" ","",tempList[[1]])) #find the position in the character vector that corresponds to the fusion 
+      # print(charPosition)
+      
+      if(length(charPosition) > 0){
+        selected <- sapply(tempList, function(x) x[charPosition]) #get just the counts for fusion of interest
+        
+        if (is.matrix(selected)){
+          #re-collapse the columns if > 1 fusion detected back into semi-colon seperated and update.
+          updated <- paste(selected[,2], collapse=";")
+        }else if(length(selected) == 2){
+          updated <- selected[2]
+        }
+        
+      }else{
+        updated <- ""
+      }
+
+      return(updated)
+}
+```
+
+
+#Read in the CDEs
+
+```{r}
+CDE.0531 <- read.csv("~/reference_mapping-files/TARGET_AML_current_asof_june30_2016_UPDATED_CLEAN_4.19.18.csv",
+                     stringsAsFactors = FALSE)
+
+# dim(CDE.0531)s
+rownames(CDE.0531) <- CDE.0531$TARGET.USI.1
+head(CDE.0531[,1:5])
+```
+
+ 
+```{r}
+DetectionType <- CDE.0531 %>%
+  filter(NUP98.KDM5A== "Yes") %>%
+  dplyr::select(Reg., NUP98.KDM5A, TARGET.USI.1,
+         Known.Fusion.detected.by.any.method,
+         Known.Fusions.by.Sequencing.or.targeted.assay,
+         Fusions.Predicted.by.Cyto, 
+         Fusions.detected.by.high.depth.seq.and.or.WGS, 
+         Fusions.detected.by.low.depth.seq)
+
+# write.csv(DetectionType, "TARGET_AML_0531_NUP98.KDM5A_DetectionMethods.csv", row.names = FALSE)
+```
+
+
+
+```{r}
+# CDE.1031 <- read.csv("~/reference_mapping-files/TARGET_AML_1031_CDE_cleaned_7.06.2018.csv",
+#                      stringsAsFactors = FALSE)
+# colnames(CDE.1031)[grep("^NUP98.KDM5A", colnames(CDE.1031))] <- "NUP98.KDM5A"
+
+CDE.1031 <- read.csv("~/reference_mapping-files/AAML1031_Target_CDEs_with_HiAR_and_PrimaryCyto_withFusionCalls_10.11.2018.csv",
+                     stringsAsFactors = FALSE)
+
+CDE.1031 <- filter(CDE.1031, !is.na(USI)) #1149 without NAs
+rownames(CDE.1031) <- CDE.1031$USI
+
+head(CDE.1031[,1:5])
+# dim(CDE.1031)#1223 by 199
+```
+
+
+```{r}
+# table(CDE.1031$CBFA2T3.GLIS2)
+table(CDE.1031$ScreenedForFusion)
+table(CDE.1031$NUP98.KDM5A)
+# table(CDE.1031$NUP98.NSD1)
+# table(CDE.1031$NUP98.Fusions)
+```
+
+
+#Read in the expression data
+
+```{r}
+HD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_TPM_Aug2014.csv", 
+                        stringsAsFactors = FALSE, row.names = 1)
+
+colnames(HD.0531) <- str_split_fixed(colnames(HD.0531), "\\.", n=5)[,3]
+head(HD.0531[,1:5])
+# dim(HD.0531) #160 samples adn 51,482 genes
+```
+
+
+```{r}
+LD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_TPM.csv", stringsAsFactors = FALSE, row.names = 1)
+
+head(LD.0531[,1:5])
+# dim(LD.0531) #494 samples adn 51573 genes
+```
+
+```{r}
+HD.1031 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_TPM.csv", 
+                    stringsAsFactors = FALSE, row.names = 1)
+
+head(HD.1031[,1:5])
+# dim(HD.1031) #1111 samples and 51573 genes. 
+```
+
+
+```{r}
+HD.0531.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_FractionalCounts_Aug2014.csv",
+                        stringsAsFactors = FALSE,
+                        row.names = 1)
+
+colnames(HD.0531.cts) <- str_split_fixed(colnames(HD.0531.cts), "\\.", n=5)[,3]
+head(HD.0531.cts[,1:5])
+# dim(HD.0531.cts)
+```
+
+```{r}
+LD.0531.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_FractionalCounts.csv",
+                        stringsAsFactors = FALSE,
+                        row.names = 1)
+
+head(LD.0531.cts[,1:5])
+```
+
+```{r}
+HD.1031.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_FractionalCounts.csv",
+                        stringsAsFactors = FALSE,
+                        row.names = 1)
+
+colnames(HD.1031.cts) <- str_split_fixed(colnames(HD.1031.cts), "\\.", n=3)[,1]
+head(HD.1031.cts[,1:5])
+```
+
+
+#Differential Expression Analysis 
+
+```{r}
+CDEs <- list(CDE.0531, CDE.0531, CDE.1031)
+names(CDEs) <- c("CDE.0531A", "CDE.0531B", "CDE.1031")
+
+sapply(CDEs, dim)
+```
+
+```{r}
+# subset for only other AML and NUP98.KDM5A fusions. Did this for the first round. 
+# CDEs <- lapply(CDEs, function(x) subset(x,grepl("NUP98-KDM5A|otherAML", NUP98.Fusions, ignore.case = TRUE)))
+# sapply(CDEs,dim)
+```
+
+```{r}
+cts <- list(HD.0531.cts, LD.0531.cts, HD.1031.cts)
+names(cts) <- c("HD.0531.cts", "LD.0531.cts", "HD.1031.cts")
+```
+
+
+#DEGs in 1031 
+
+
+Running with Limma Voom and updated to include protien localization Anno and TM helix information from Ensemble BiomaRt. 
+ 
+```{r}
+# pdf("TARGET_AML_1031_NUP98.KDM5A_vs_otherAML_includingNUPs_Heatmaps2.pdf", height = 10, width = 10)
+DEGs.1031 <- twoGroups_DEGs(expnData = cts$HD.1031.cts, 
+                            clinData = CDEs$CDE.1031,
+                            col = "NUP98.KDM5A", 
+                            ref = "No")
+# dev.off()
+# saveRDS(DEGs.1031, "TARGET_AML_1031_NUP98.KDM5A_vs_otherAML_voom_8.27.18.RDS")
+```
+
+```{r}
+# pdf("TARGET_AML_1031_NUP98.KDM5A_vs_NBM_includingNUPs_Heatmap.pdf", height = 10, width = 10)
+DEGs.1031.NBM <- twoGroups_DEGs(expnData = cts$HD.1031.cts, 
+                            clinData = CDEs$CDE.1031,
+                            col = "NUP98.KDM5A", 
+                            ref = "No", 
+                            BM=TRUE)
+# dev.off()
+# saveRDS(DEGs.1031.NBM, "TARGET_AML_1031_NUP98.KDM5A_vs_NBM_voom_8.27.18.RDS")
+```
+
+```{r}
+# dim(DEGs.1031$DE$Voom$E) #19750 by 1038
+# dim(DEGs.1031.NBM$DE$Voom$E) #18871    78
+```
+
+
+```{r}
+DEGs.1031.df <- extract_DEGs(DEGs.1031)
+head(DEGs.1031.df)
+dim(DEGs.1031.df) #2,800
+```
+
+
+```{r}
+DEGs.anno.tx <- extract_DEGs(DEGs.1031, anno=TRUE)
+# head(DEGs.anno.tx)
+
+DEGs.anno.gene <- extract_DEGs(DEGs.1031, anno = TRUE,geneLevel = TRUE)
+
+head(DEGs.anno.gene)
+# dim(DEGs.anno.gene)
+# write.csv(DEGs.anno.gene,"TARGET_AML_1031_NUP98.KDM5A_vs_otherAML_DEGs_withAnno.csv", row.names = FALSE)
+```
+
+
+```{r}
+DEGs.NBM.df <- extract_DEGs(DEGs.1031.NBM)
+# head(DEGs.NBM.df)
+# dim(DEGs.NBM.df) # 4933    8
+
+DEGs.NBM.tx <- extract_DEGs(DEGs.1031.NBM, anno=TRUE)
+# head(DEGs.anno.tx)
+
+DEGs.NBM.gene <- extract_DEGs(DEGs.1031.NBM, anno = TRUE, geneLevel = TRUE)
+
+head(DEGs.NBM.gene)
+# dim(DEGs.NBM.gene) # 4933   11
+# write.csv(DEGs.NBM.gene, "TARGET_AML_1031_NUP98.KDM5A_vs_NBM_DEGs_withAnno.csv")
+```
+
+
+#DE for all 3 Cohorts
+
+NOTE: All analysis for Sanne was done with limma trend. 
+So code below is the identical to Sannes results
+
+```{r message=FALSE, warning=FALSE}
+# pdf("NUP98.KDM5A_vs_otherAML_includingNUPs_allDEGs_Heatmaps.pdf", height = 10, width = 10)
+
+DEGs <- mapply(twoGroups_DEGs, cts, CDEs, 
+               MoreArgs = list(col="NUP98.KDM5A",ref="No"), 
+               SIMPLIFY = FALSE)
+
+names(DEGs) <- c("HD.0531", "LD.0531", "HD.1031")
+
+# dev.off()
+```
+
+```{r}
+# save(DEGs, file="TARGET_AML_NUP98.KDM5A_vs_OtherAML_IncludingNUPs_DEGs_List.RData")
+DEGs <- get(load("TARGET_AML_NUP98.KDM5A_vs_OtherAML_IncludingNUPs_DEGs_List.RData"))
+lapply(DEGs, function(x) table(x$phenovector))
+```
+
+NOTE:DOUBLE CHECK THAT THE 0531 DATA is current for KDM5A and that the DEGs were done after removing the false positives. 
+
+```{r}
+DEGs.list <- lapply(DEGs, extract_DEGs)
+
+# lapply(DEGs.list, function(x) head(x, n=10))
+lapply(DEGs.list, dim) #223, 227,2252
+```
+
+```{r}
+# lapply(names(DEGs.list), function(x) write.csv(DEGs.list[[x]], file = paste0("NUP98.KDM5A_vs_OtherAML_includingNUPs_", x, "_DEGs.csv")))
+```
+
+
+## DEGs Against NBM 
+
+```{r message=FALSE}
+# pdf("NUP98.KDM5A_vs_NBM_includingNUPs_allDEGs_Heatmaps.pdf", height = 10, width = 10)
+DEGs.NBM <- mapply(twoGroups_DEGs, cts, CDEs, MoreArgs = list(col="NUP98.KDM5A",ref="No", BM=TRUE), 
+               SIMPLIFY = FALSE) #logCPM for continuity to previous analysis for Sanne.
+names(DEGs.NBM) <- c("HD.0531", "LD.0531", "HD.1031")
+# dev.off()
+```
+
+```{r}
+idx <- sapply(DEGs.NBM, function(x) length(x) > 4) #HD 0531 did not have normals. 
+DEGs.NBM <- DEGs.NBM[idx]
+```
+
+```{r}
+# save(DEGs.NBM, file="TARGET_AML_NUP98.KDM5A_vs_NBM_IncludingNUPs_DEGs_List.RData")
+load("TARGET_AML_NUP98.KDM5A_vs_NBM_IncludingNUPs_DEGs_List.RData")
+```
+
+```{r}
+DEGs.list.NBM <- lapply(DEGs.NBM, extract_DEGs)
+
+lapply(DEGs.list.NBM, function(x) head(x, n=10))
+# lapply(DEGs.list.NBM, dim) #4609 and 6,074
+```
+
+```{r}
+pca.plots.nbm <- lapply(DEGs.NBM, extract_PCA)
+
+# lapply(names(pca.plots.nbm), 
+#        function(x) ggsave(filename = paste0("TARGET_AML_",x,"NUP98.KDM5A_vs_NBM_PCAplot.tiff"), device = "tiff", plot = pca.plots.nbm[[x]], units = "in", height = 5, width=5, dpi = 200))
+```
+
+
+```{r}
+# lapply(names(DEGs.list.NBM), function(x) write.csv(DEGs.list.NBM[[x]], file = paste0("NUP98.KDM5A_vs_NBM_includingNUPs_", x, "_DEGs.csv")))
+```
+
+
+#Examine the Results of GSEA 
+
+```{r}
+all.res <- dir("GAGE/RData/", pattern = "*.RData")
+all.res
+```
+
+```{r}
+gage.res <- list()
+for (f in all.res){
+  n <- gsub("^.+AML_([eF].+).RData", "\\1", f) %>%
+    gsub("_Set.+","",.)
+  
+  gage.res[[n]] <- get(load(paste0("GAGE/RData/", f)))
+}
+rm(list = ls(pattern="^GSA"))
+```
+
+```{r}
+res.1031 <- list()
+for (res in names(gage.res)){
+  res.1031[[res]] <- gage.res[[res]]$HD.1031
+}
+# rm(gage.res)
+summary(res.1031)
+```
+
+```{r}
+res.1031$expn_C2.All$SigPaths[1:10,1:10]
+```
+
+```{r}
+dim(res.1031$expn_C3_TFbindingSites$SigPaths)
+# res.1031$expn_C3_TFbindingSites$SigPaths[1:20,1:10]
+# res.1031$expn_C3_TFbindingSites$gsa$less[1:5,1:10] #none downregulated....
+res.1031$expn_C3_TFbindingSites$coreGenes[1:5]
+# write.csv(res.1031$expn_C3_TFbindingSites$SigPaths, "GAGE/TARGET_AML_1031_NUP98.KDM5A_vs_OtherAMLs_includingNUPs_UpRegulated_expn_C3_TFbindingSites_Paths.csv")
+```
+
+```{r}
+res.1031$expn_HSA.KEGG$gsa$greater[1:5,1:5]
+```
+
+```{r}
+for (res in names(res.1031)){
+  r <- res.1031[[res]]
+  
+  if(all(length(r) == 4 & grepl("expn",res) & ! grepl("C2.KEGG",res))){
+    
+    up.name <- paste0("TARGET_AML_1031_NUP98.KDM5A_vs_OtherAMLs_includingNUPs_UpRegulated_",res,"_Paths.csv")
+    up.res <- r$SigPaths[,1:5]
+    # print(dim(up.res))
+    write.csv(up.res, up.name)
+    
+    dn.name <- paste0("TARGET_AML_1031_NUP98.KDM5A_vs_OtherAMLs_includingNUPs_DownRegulated_",res,"_Paths.csv")
+    dn.res <- subset(r$gsa$less,r$gsa$less[,"q.val"] <  0.1 &
+                       !is.na(r$gsa$less[,"q.val"]))
+    # print(dim(dn.res))
+    write.csv(dn.res,dn.name)
+    
+  }
+}
+```
+
+
+
+
+#PCA Analysis 
+
+```{r}
+pca <- lapply(DEGs, extract_PCA)
+labels <- c("GroupA"="NUP98.KDM5A", "GroupB"="OtherAML")
+colors <- c("GroupA"="red", "GroupB"="blue")
+pca <- lapply(pca, function(x) x+scale_color_manual(labels=labels, values=colors))
+pca
+# lapply(names(pca), function(x) ggsave(file=paste0("NUP98.KDM5A_vs_OtherAML_", x,"_PCAplot.tiff"),
+#                                       plot=pca[[x]], height = 10, width = 10, units = "in", dpi=1000, device = "tiff"))
+```
+
+
+
+#PCA with NUP98 Fusions Only
+
+```{r}
+source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/clusterAnalysis_Function.r")
+```
+
+
+## All NUPs
+
+```{r}
+onlyNups <- lapply(list(CDE.0531, CDE.0531, CDE.1031), function(x) 
+  subset(x,grepl("NUP98", NUP98.Fusions)))
+
+# lapply(onlyNups, dim)
+
+phenos <- lapply(onlyNups, GroupIDs, col="NUP98.Fusions")
+phenos <- lapply(phenos,phenoVectors_MultipleGroups)
+# lapply(phenos, table)
+
+pca.nups <- mapply(PCA, cts,phenos, SIMPLIFY = FALSE)
+
+# pca.nups
+```
+
+```{r fig.height=7, fig.width=7}
+col.LD.0531 <- c("NUP98.NSD1"="#8F7700FF", "NUP98.KDM5A"="firebrick1", "NUP98.HMGB3"="#868686FF",
+   "NUP98.HOXA9"="lightseagreen", "NUP98.HOXD13"="#0073C2FF","NUP98.PHF23"="#3B3B3BFF" )
+
+# tiff("NUP98.Fusions_LD.0531_PCAplot.tiff", height = 7, width=7,res=1000, units = "in")
+pca.nups$LD.0531.cts$pca_plot + 
+  scale_color_manual(values = col.LD.0531) +
+  theme(text = element_text(size=20))
+# dev.off()
+```
+
+```{r fig.height=7, fig.width=7}
+col.HD.1031 <- c("NUP98.ADD3"="#7AA6DCFF",
+                 "NUP98.DDX10"="#EFC000FF", 
+                 "NUP98.HOXA13"="#868686FF",
+                 "NUP98.HOXA9"="lightseagreen",  
+                 "NUP98.HOXD13"="#0073C2FF", 
+                 "NUP98.KDM5A"="firebrick1", 
+                 "NUP98.NSD1"="#8F7700FF",  
+                 "NUP98.PRRX1"="#3B3B3BFF",  
+                 "NUP98.TOP1"="limegreen")
+
+# tiff("NUP98.Fusions_1031_PCAplot.tiff", res=1000, units = "in", height = 7, width = 7)
+par(mar=c(0,0,0,0))
+pca.nups$HD.1031.cts$pca_plot +
+  scale_color_manual(values = col.HD.1031) +
+  theme(text = element_text(size=20)) +
+  ylim(-50,50) +
+  xlim(-40,77)
+# dev.off()
+```
+
+```{r}
+tab1 <- table(pca.nups$LD.0531.cts$pca_data$group) %>%  as.data.frame()
+tab2 <- table(pca.nups$HD.1031.cts$pca_data$group) %>% as.data.frame()
+t <- list(tab1,tab2) %>% set_names(c("LD.0531", "HD.1031"))
+
+# lapply(names(t),function(x) write.csv(t[[x]], paste0("NUP98.Fusions_sampleSize_", x,".csv")))
+```
+
+
+## NUP98-NSD1 and NUP98-KDM5A only 
+
+```{r }
+only.NSD1.KDM5A <- lapply(list(CDE.0531, CDE.0531, CDE.1031), function(x) 
+  subset(x,grepl("NSD1.NUP98|NUP98.NSD1|NUP98.KDM5A|KDM5A.NUP98", NUP98.Fusions)))
+
+names(only.NSD1.KDM5A) <- c("AML0531.A", "AML0531.B", "AML1031")
+
+# lapply(only.NSD1.KDM5A, dim)
+# table(only.NSD1.KDM5A$AML1031$NUP98.KDM5A) #16 OK 
+# table(only.NSD1.KDM5A$AML1031$NUP98.NSD1_RNASeqCalls) #49 OK
+
+only.NSD1.KDM5A$AML1031$NUP_2Groups <- ifelse(grepl("NSD1", only.NSD1.KDM5A$AML1031$NUP98.Fusions),
+                                       "NUP98.NSD1", "NUP98.KDM5A")
+
+```
+
+```{r fig.width=5, fig.height=5}
+cc_2Groups <- c("NUP98.KDM5A"="#984EA3", "NUP98.NSD1"="#FF7F00")
+
+pheno_2Groups <- only.NSD1.KDM5A$AML1031$NUP_2Groups %>%
+  set_names(only.NSD1.KDM5A$AML1031$USI)
+
+pca.1031_n1000 <- PCA(expnData = HD.1031.cts, 
+                phenovector = pheno_2Groups, 
+                title="AAML1031: NUP98-NSD1 and NUP98-KDM5A", 
+                round = TRUE,
+                colorCodes = cc_2Groups, 
+                ntop = 500)
+pca.1031_n1000$pca_plot 
+```
+
+Using the top 500 most varied genes shows that there is some genes that seperate NUP98.NSD1 by PC2. Which is really interesting. But its not obviosly FLT3-ITD, so it will take some time to decipher why. Hopefully not techinical. 
+
+Also, when using the top 1000 most varied genes you do NOT observe that split in the NUP98-NSD1. Would be interesting to see what it is in those 500 most varied genes that seperates the NUP98-NSD1. 
+
+
+```{r}
+pca.1031_n1000 <- PCA(expnData = HD.1031.cts, 
+                phenovector = pheno_2Groups, 
+                title="AAML1031: NUP98-NSD1 and NUP98-KDM5A", 
+                round = TRUE,
+                colorCodes = cc_2Groups, 
+                ntop = 1000, 
+                PC3 = TRUE)
+
+pca.1031_n1000$pca_data <- pca.1031_n1000$pca_data %>%
+  inner_join(., only.NSD1.KDM5A$AML1031, by=c("name"="USI"))
+```
+
+```{r}
+add_plotting_params <- function(PCA.plot.res,PC){
+  
+  PCA.plot.res + 
+    
+  lims(y=c(-65,75), x=c(-75,160)) +
+  scale_x_continuous(breaks = c(-40, 0, 40, 80, 120, 160)) +
+  
+  geom_point(data=subset(pca.1031_n1000$pca_data, FLT3.ITD.positive. == "Yes"), 
+             mapping = aes_string(x="PC1", y=PC, shape="FLT3.ITD.positive."), size=5, color="navy") +
+    
+  scale_shape_manual(values = c("Yes"=21), labels="Internal\ntandem\nduplication") +
+    
+  stat_ellipse(aes(fill=group),color=NA,geom="polygon", type="norm", alpha=0.1) +
+  scale_fill_manual(values=cc_2Groups) + 
+  
+  theme(legend.text = element_text(size=18), 
+      legend.title = element_text(size=18))
+  
+} 
+```
+
+
+```{r fig.height=5, fig.width=7, message=FALSE}
+# tiff("TARGET_AML_1031_NUP98.KDM5A_NUP98.NSD1_Top1000genes_PCAplot.tiff", height = 5, width = 7, units="in", res=600)
+pca.1031_n1000$pca_plot <-
+  add_plotting_params(pca.1031_n1000$pca_plot, PC="PC2") 
+pca.1031_n1000$pca_plot
+# dev.off()
+```
+
+
+```{r fig.height=5, fig.width=7, message=FALSE}
+# tiff("TARGET_AML_1031_NUP98.KDM5A_NUP98.NSD1_Top1000genes_PC3_plot.tiff", height = 5, width = 7, units="in", res=600)
+pca.1031_n1000$pca_plot2 <-
+  add_plotting_params(pca.1031_n1000$pca_plot2)
+pca.1031_n1000$pca_plot2
+# dev.off()
+
+# saveRDS(pca.1031_n1000, "PCA_VST_top1000.RDS")
+```
+
+```{r}
+cc.2G_FLT3 <- list(fill=cc_2Groups, 
+                   color=c("Yes"="navy"))
+```
+
+```{r}
+pca.allgenes <- pca_custom(expnData = DEGs$HD.1031$DE$dge, 
+                           CDE = only.NSD1.KDM5A$AML1031, 
+                           fillCol = "NUP_2Groups", 
+                           colorCol = "FLT3.ITD.positive.", 
+                           colorCode = cc.2G_FLT3, 
+                           single.col.outline = TRUE, 
+                           toHighlight = "Yes")
+```
+
+```{r}
+pca.allgenes.vst <- pca_custom(expnData = assay(pca.1031_n500$vst), 
+                           CDE = only.NSD1.KDM5A$AML1031, 
+                           fillCol = "NUP_2Groups", 
+                           colorCol = "FLT3.ITD.positive.", 
+                           colorCode = cc.2G_FLT3, 
+                           single.col.outline = TRUE, 
+                           toHighlight = "Yes", 
+                           ellipse = TRUE, 
+                           PC3 = TRUE)
+```
+
+```{r fig.height=5, fig.width=7}
+# tiff("TARGET_AML_1031_NUP98.KDM5A_NUP98.NSD1_VST_allGenes_PCAplot.tiff", height = 5, width = 7, units="in", res=600)
+pca.allgenes.vst$plot.1 <-
+  pca.allgenes.vst$plot.1 + 
+  labs(title="AAML1031: NUP98-KDM5A and NUP98-NSD1")
+pca.allgenes.vst$plot.1
+# dev.off()
+```
+
+
+```{r fig.height=5, fig.width=7}
+# tiff("TARGET_AML_1031_NUP98.KDM5A_NUP98.NSD1_VST_allGenes_PC3_plot.tiff", height = 5, width = 7, units="in", res=600)
+pca.allgenes.vst$plot.2 <-
+  pca.allgenes.vst$plot.2 + 
+  labs(title="AAML1031: NUP98-KDM5A and NUP98-NSD1") 
+
+pca.allgenes.vst$plot.2
+# dev.off()
+
+# saveRDS(pca.allgenes.vst, "PCA_VST_AllGenes.RDS")
+```
+
+
+## NUP98-NSD1 alone
+
+  geom_point(data=subset(pca.1031_n1000$pca_data, FLT3.ITD.positive. == "Yes"), 
+             mapping = aes(x=PC1, y=PC2, shape=FLT3.ITD.positive.), size=5, color="navy") +
+  scale_shape_manual(values = c("Yes"=21), labels="Internal\ntandem\nduplication") +
+  stat_ellipse(aes(fill=group),color=NA,geom="polygon", type="norm", alpha=0.1) +
+  scale_fill_manual(values=cc_2Groups) + 
+  theme(legend.text = element_text(size=18), 
+      legend.title = element_text(size=18))
+
+```{r}
+pheno_NSD1 <- pheno_2Groups[grep("NSD1", pheno_2Groups)]
+
+pca.NSD1_n1000 <- PCA(expnData = HD.1031.cts, 
+                phenovector = pheno_NSD1, 
+                title="AAML1031: NUP98-NSD1", 
+                round = TRUE,
+                # colorCodes = cc_2Groups, 
+                ntop = 1000)
+
+pca.NSD1_n1000$pca_data <- pca.NSD1_n1000$pca_data %>%
+  inner_join(., only.NSD1.KDM5A$AML1031, by=c("name"="USI"))
+```
+
+```{r fig.width=5, fig.height=5}
+flt3.dat <- subset(pca.NSD1_n1000$pca_data, FLT3.ITD.positive. == "Yes")
+
+pca.NSD1_n1000$pca_plot +
+    geom_point(data=flt3.dat, 
+             mapping = aes(x=PC1, y=PC2, shape=FLT3.ITD.positive.), size=5, color="navy") +
+  scale_shape_manual(values = c("Yes"=21), labels="Internal\ntandem\nduplication") +
+  scale_color_manual(values=cc_2Groups[["NUP98.NSD1"]])
+  
+```
+
+
+```{r}
+pheno_NSD1.FLT3 <- pca.NSD1_n1000$pca_data$FLT3.ITD.positive. %>%
+  set_names(pca.NSD1_n1000$pca_data$name)
+
+
+pca.NSD1.FLT3_n1000 <- PCA(expnData = HD.1031.cts, 
+                phenovector = pheno_NSD1.FLT3, 
+                title="AAML1031: NUP98-NSD1", 
+                round = TRUE,
+                # colorCodes = cc_2Groups, 
+                ntop = 1000, 
+                PC3 = TRUE)
+
+
+pca.NSD1.FLT3_n1000$pca_data <- pca.NSD1.FLT3_n1000$pca_data %>%
+  inner_join(., only.NSD1.KDM5A$AML1031, by=c("name"="USI"))
+```
+
+
+```{r fig.width=5, fig.height=5}
+pca.NSD1.FLT3_n1000$pca_plot <-
+  pca.NSD1.FLT3_n1000$pca_plot +
+  scale_color_manual(values=c("red","navy"))
+
+pca.NSD1.FLT3_n1000$pca_plot2 <- 
+  pca.NSD1.FLT3_n1000$pca_plot2 +
+  scale_color_manual(values=c("red","navy"))
+
+# tiff("TARGET_AML_1031_NUP98.NSD1_FLT3.ITD_PCAplot.tiff",height = 5, width = 7, units="in", res=600)
+# pca.NSD1.FLT3_n1000$pca_plot
+# dev.off()
+
+# tiff("TARGET_AML_1031_NUP98.NSD1_FLT3.ITD_PC3_plot.tiff",height = 5, width = 7, units="in", res=600)
+# pca.NSD1.FLT3_n1000$pca_plot2
+# dev.off()
+```
+
+```{r}
+# saveRDS(pca.NSD1.FLT3_n1000, "PCA_NDS1_FLT3_top1000.RDS")
+```
+
+
+Does not appear to separate the NUP98-NSD1 based on solely the FLT3-ITD Status
+
+#MDS with HOX genes 
+
+```{r}
+source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/MDS_withHull_orEllipses_Function.r")
+```
+
+```{r}
+cyto <- data.frame(Status=DEGs$HD.1031$phenovector,
+                   stringsAsFactors = FALSE) %>%
+  
+  rownames_to_column("USI") %>%
+  
+  inner_join(., dplyr::select(CDE.1031, USI,MLL_Cleaned, t.8.21_Cleaned,inv.16_Cleaned, NPM1, NUP98.NSD1,FLT3.ITD, FusionName), by="USI") %>%
+  
+  mutate(Status=gsub("GroupA", "NUP98.KDM5A", Status)) %>%
+  mutate(Status=gsub("GroupB", "OtherAML", Status)) %>%
+  
+  mutate(Status=ifelse(NUP98.NSD1=="Yes", "NUP98.NSD1", Status)) %>%
+  mutate(Status=ifelse(NPM1=="Positive", "NPM1", Status)) %>%
+  mutate(Status=ifelse(grepl("DEK-NUP214", FusionName), "DEK.NUP214", Status)) %>%
+  
+  mutate(Status=ifelse(MLL_Cleaned == "Positive", "KMT2A",
+                       ifelse(t.8.21_Cleaned == "Positive", "t.8.21",
+                              ifelse(inv.16_Cleaned=="Positive", "inv.16",Status))))
+  
+
+
+cyto
+```
+
+```{r}
+#run only for VST transformed counts
+vst <- PCA(expnData = HD.1031.cts, phenovector = DEGs$HD.1031$phenovector, round = TRUE)
+
+# vst$pca_plot
+```
+
+
+```{r}
+hox.vst <- assay(vst$vst) %>%
+  data.frame() %>%
+  rownames_to_column("gene") %>%
+  filter(gene %in% hoxab) %>% #all hoxab's accounted for even with filtering for counts 
+  gather(var, value, -gene) %>%
+  spread(gene, value)
+  # column_to_rownames("gene")
+
+head(hox.vst)
+dim(hox.vst)
+```
+
+```{r}
+forPCA <- cyto %>%
+  inner_join(., hox.vst, by=c("USI"="var"))
+
+head(forPCA)
+```
+
+```{r}
+library(vegan)
+
+# forPCA2 <- forPCA %>%
+#   filter(Status != "OtherAML")
+
+MDS <- capscale(forPCA[,hoxab] ~ 1, distance = "bray", add=TRUE)
+```
+
+```{r}
+scores <- as.data.frame(scores(MDS, display="sites")) %>%
+  dplyr::mutate(MDS1.rotate=MDS1*-1, 
+         MDS2.rotate=MDS2*-1) # scores got rotated after changing the code,where USI had specific factor levels
+  # mutate(USI=forPCA$USI) 
+  # arrange(dplyr::desc(MDS2.rotate)) %>%
+  # dplyr::slice(3:nrow(.)) #used when investigating outliers
+
+
+head(scores)
+dim(scores)
+```
+
+To determine why 1/2 of NUP98-NSD1 is not clustering with the rest. 
+
+1) Use kmedians
+This split the middle of the group as well, and or grouped the majority of the NSD1s in the inv.16s cluster.  the two approaches were to use A) kmedians with kmean initialization (see docs) or only kmedians.
+
+2) Use K=5 
+
+So using kmeans, and both kmedian approaches we saw that K=5 did not help and usually resulted in NSD1 clustering with Inv16 again. 
+
+3) removed "outliers" with very high Dim2 scores and very near zero dim 1 scores. Just to see if its affecting the choice of "center" for a cluster.
+this "helped" show K=5 with kmeans where NSD1 was more or less its own cluster. and then NPM1/KDM5A/DEK-NUP214 as one and inv.16 as one. 
+
+
+4)Removing all "other AMLs"
+
+This approach only worked with k=5 and with kmeans. Again this shows NUP98-NDS1 as its own cluster. 
+
+Based on these observations, it appears that NSD1 and KDM5A are fairley dissimilar in HOX expression and within the NSD1, some NSD1 cluster more closely with other AMLs appear to cluster more with NSD1, which has lead to moving of the center of hull to split the group into about 1/2.  
+
+
+```{r}
+ggscatter(scores, x="MDS1.rotate", y="MDS2.rotate",
+          size=1,
+          repel = TRUE)
+```
+
+
+```{r}
+# NOTE:ISSUES in namespace with flexclust BE AWARE OF WARNINGS
+library(flexclust)
+set.seed(5)
+
+k=4
+#now use k-medians and kmeans++ initialization, cluster centroids
+kmed <- flexclust::kcca(scores[,3:4],k=k, family = kccaFamily("kmedians"),
+             control = list(initcent="kmeanspp"), save.data=TRUE)
+
+#try with out kmeans initialization. 
+kmed2 <- flexclust::kcca(scores[,3:4],k=k, family = kccaFamily("kmedians"), save.data=TRUE)
+
+med.groups <- kmed@cluster
+med.groups2 <- kmed2@cluster
+#using first from name space: flexclust ok
+
+# image(kmed2)
+# points(kmed2)
+# image(kmed)
+```
+
+
+```{r}
+set.seed(5)
+kmean <- kmeans(scores[,3:4], k)
+mean.groups <- as.factor(kmean$cluster)
+```
+
+
+```{r}
+scores <- scores %>%
+  mutate(kmeans=mean.groups,
+         kmedians.init=med.groups,
+         kmedians=med.groups2) %>%
+  # inner_join(., dplyr::select(forPCA, USI,Status, FLT3.ITD), by="USI")
+  mutate(Status=forPCA$Status,
+         FLT3=forPCA$FLT3.ITD)
+
+head(scores)
+# dim(scores)
+```
+
+
+```{r}
+table(scores$Status, scores$kmedians)
+table(scores$Status, scores$kmedians.init)
+table(scores$Status, scores$kmeans)
+```
+
+
+```{r}
+# ggplot(scores, aes(x=MDS1.rotate, y=MDS2.rotate, group=kmeans, fill=Status, color=FLT3)) + 
+#   geom_point() + 
+#   theme_minimal()
+```
+
+
+```{r fig.height=2}
+# library(RColorBrewer)
+# barplot(rep(1,8), col=brewer.pal(8,"Set1"))
+```
+
+```{r fig.height=5, fig.width=5}
+mds.plot <- ggscatter(scores, x="MDS1.rotate", y="MDS2.rotate", 
+          size=3.0, 
+          color="Status",
+          # group="kmeans",
+          palette = "Set1",
+          ellipse =FALSE,
+          ellipse.type = "norm",
+          repel = TRUE,
+          add.params = list(alpha=0.5)) #note:alpha does not work
+# mds.plot
+```
+
+
+```{r warning=FALSE, message=FALSE, fig.height=10, fig.width=10}
+mds.plot <- mds.plot + 
+  scale_color_manual(values=c("DEK.NUP214"="#4DAF4A", "inv.16"="#E41A1C",
+                              "KMT2A"="#377EB8", "NPM1"="#FFFF33",
+                              "NUP98.KDM5A"="#984EA3", "NUP98.NSD1"="#FF7F00",
+                              "t.8.21"="#A65628", "OtherAML"="grey")) +
+  # geom_point(data=subset(scores, FLT3=="Internal tandem duplication"), mapping = aes(x=MDS1.rotate, y=MDS2.rotate, shape=FLT3),
+  #            size=3.0, color="navy") +
+  # scale_shape_manual(values = c("Internal tandem duplication"=21), labels="Internal\ntandem\nduplication") + 
+  geom_point(data=subset(scores, Status=="NUP98.KDM5A"), aes(x=MDS1.rotate, y=MDS2.rotate), fill="#984EA3", color="#984EA3", size=3.5) +
+  geom_point(data=subset(scores, Status=="inv.16"), aes(x=MDS1.rotate, y=MDS2.rotate), fill="#E41A1C", color="#E41A1C", size=3.0, alpha=1) + 
+  geom_point(data=subset(scores, Status=="t.8.21"), aes(x=MDS1.rotate, y=MDS2.rotate), fill="#A65628", color="#A65628", size=3.0, alpha=0.25)
+
+
+# mds.plot
+```
+
+
+
+```{r warning=FALSE, message=FALSE, fig.height=10, fig.width=10}
+
+#https://stats.stackexchange.com/questions/22805/how-to-draw-neat-polygons-around-scatterplot-regions-in-ggplot2/22855
+find_hull <- function(df) df[chull(df$MDS1.rotate, df$MDS2.rotate), ]
+hulls.mean <- plyr::ddply(scores,"kmeans",find_hull )
+
+
+# tiff("NUP98.KDM5A_HOXA_HOXB_genes_MDS_withEllipses_MDSplot_removedOtherAML_2.28.18.tiff", height = 10, width = 10, res=1200, units="in")
+
+mds.plot + 
+  # stat_ellipse(data = scores,
+               # mapping = aes(group=group, fill=group), geom = "polygon", alpha=0.15, color="black", level=0.99)
+  geom_polygon(data=hulls.mean, aes(fill=kmeans), alpha=0.2) +
+  # scale_fill_manual(values = c( "1"="#39BEB1","2"="#ABB065", "3"="#ACA4E2","4"="#E495A5"), guide= FALSE) +
+  # scale_fill_manual(values = c( "1"="#65BC8C","2"="#C29DDE", "3"="#BDAB66","4"="#E495A5", "5"="#55B8D0"), guide= FALSE) +
+    scale_fill_manual(values = c( "1"="goldenrod1","2"="#C29DDE", "3"="#BDAB66","4"="#E495A5", "5"="#55B8D0"), guide= FALSE) +
+  # scale_fill_manual(values=rainbow_hcl(k), guide=FALSE) +
+  theme(text = element_text(size=20)) +
+  labs(x="MDS1", y="MDS2")
+
+
+# dev.off()
+```
+
+
+```{r}
+table(forPCA$t.8.21_Cleaned, forPCA$FLT3.ITD)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+hulls.med <- plyr::ddply(scores,"kmedians",find_hull)
+
+
+# tiff("NUP98.KDM5A_HOXA_HOXB_genes_MDS_withEllipses_MDSplot.tiff", height = 10, width = 10, res=1200, units="in")
+mds.plot + 
+  # stat_ellipse(data = scores,
+               # mapping = aes(group=group, fill=group), geom = "polygon", alpha=0.15, color="black", level=0.99)
+  geom_polygon(data=hulls.med, aes(fill=as.factor(kmedians)), alpha=0.15) +
+  scale_fill_manual(values = rainbow_hcl(k)) + 
+  theme(text = element_text(size=20)) +
+  labs(x="MDS1", y="MDS2")
+# dev.off()
+```
+
+
+
+```{r warning=FALSE, warning=FALSE,message=FALSE}
+hulls.med <- plyr::ddply(scores,"kmedians.init",find_hull)
+
+
+# tiff("NUP98.KDM5A_HOXA_HOXB_genes_MDS_withEllipses_MDSplot.tiff", height = 10, width = 10, res=1200, units="in")
+mds.plot + 
+  # stat_ellipse(data = scores,
+               # mapping = aes(group=group, fill=group), geom = "polygon", alpha=0.15, color="black", level=0.99)
+  geom_polygon(data=hulls.med, aes(fill=as.factor(kmedians.init)), alpha=0.15) +
+  scale_fill_manual(values = rainbow_hcl(k)) + 
+  theme(text = element_text(size=20))
+```
+
+
+
+#Correlation Heatmap with DEGs 
+
+```{r}
+library(RColorBrewer)
+library(reshape)
+```
+
+
+http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization
+
+```{r}
+cyto <- data.frame(Status=DEGs$HD.1031$phenovector,
+                   stringsAsFactors = FALSE) %>%
+  
+  rownames_to_column("USI") %>%
+  
+  inner_join(., dplyr::select(CDE.1031, USI,MLL, Primary.Cytogenetic.Code,
+                              t.8.21.,inv.16., NPM.mutation.,
+                              NUP98.NSD1_RNASeqCalls,
+                              FLT3.ITD., DEK.NUP214_RNASeqCalls), by="USI") %>%
+  
+  mutate(Status=gsub("GroupA", "NUP98.KDM5A", Status)) %>%
+  mutate(Status=gsub("GroupB", "OtherAML", Status)) %>%
+  
+  mutate(Status=ifelse(Status == "OtherAML" & NUP98.NSD1_RNASeqCalls=="Yes", "NUP98.NSD1", Status)) %>%
+  mutate(Status=ifelse(Status == "OtherAML" & NPM.mutation.=="Yes", "NPM1", Status)) %>%
+  mutate(Status=ifelse(Status == "OtherAML" & DEK.NUP214_RNASeqCalls=="Yes", "DEK.NUP214", Status)) %>%
+  mutate_at(vars(Status), funs(case_when(
+    Status == "OtherAML" & MLL == "Yes" ~ "KMT2A", 
+    Status == "OtherAML" & t.8.21. == "Yes" ~ "t.8.21",
+    Status == "OtherAML" & inv.16. == "Yes" ~ "inv.16", 
+    Status == "OtherAML" & Primary.Cytogenetic.Code == "Normal" ~ "Normal",
+    TRUE ~ Status)))
+
+# cyto
+```
+
+```{r}
+CPM.DEGs <- DEGs$HD.1031$DE$dge %>%
+  data.frame() %>%
+  rownames_to_column("gene") %>%
+  filter(gene %in% DEGs.list$HD.1031$gene) %>%
+  column_to_rownames("gene")
+
+# head(CPM.DEGs[,1:5])
+# dim(CPM.DEGs) #2176  by 980, and 2252 by 1035 if including all NUPS
+```
+
+
+##Correlation with Log2 CPM and Mean centered
+
+http://www.gastonsanchez.com/visually-enforced/how-to/2014/01/15/Center-data-in-R/
+http://onlinestatbook.com/2/transformations/log.html
+
+```{r}
+orderText <- function(mat,Names){
+  library(corrplot)
+  order.hc <- corrMatOrder(mat, order = "hclust")
+  textColor <- ifelse(colnames(mat) %in% Names, "red", "black")
+  textColor <- textColor[order.hc]
+  return(textColor)
+}
+
+```
+
+```{r}
+reorder_cormat <- function(cormat,vector=FALSE){
+  # Use correlation between variables as distance
+  dd <- as.dist((1-cormat)/2)
+  # dd <- as.dist(1- abs(cormat))
+  hc <- hclust(dd, method="ward.D2")
+  cormat <-cormat[hc$order, hc$order]
+  
+  if (vector){
+    order <- rownames(cormat)
+    return(order)
+  }else{
+    return(cormat)
+  }
+  
+}
+```
+
+
+```{r}
+#mean centering on rows/genes 
+#this is geometric mean centering because the antilog of the arithmatic mean of logged values == geomtric mean of non-logged values 
+CPM.DEGs.ctr <- scale(t(CPM.DEGs), center = TRUE, scale = FALSE)
+CPM.DEGs.ctr <- t(CPM.DEGs.ctr)
+cormat.cpm.ctr <- cor(CPM.DEGs.ctr)
+
+cormat.cpm.ctr[1:10,1:10]
+```
+
+```{r}
+KDM5A <- DEGs$HD.1031$phenovector[DEGs$HD.1031$phenovector == "GroupA"]
+# KDM5A
+corrplot::corrplot(cormat.cpm.ctr, method="color", type="lower",
+                   order = "hclust", tl.cex = 0.15, tl.col = orderText(cormat.cpm.ctr,names(KDM5A)))
+                   
+```
+
+```{r}
+cormat.final <- reorder_cormat(cormat.cpm.ctr)
+cormat.order <- reorder_cormat(cormat.cpm.ctr, vector=TRUE)
+
+# cormat.final[1:10,1:10]
+# cormat.order[1:10]
+```
+
+
+corrplot(cormat.final, method="color", tl.cex = 0.15, tl.col = "black") #identical to the above one, so ordering worked
+
+```{r}
+cyto <- cyto %>%
+  mutate(pair=USI) %>%
+  mutate_at(c("USI", "pair"),funs(factor(., levels=cormat.order))) %>% #order the USIs as the cormat
+  arrange(USI) %>%
+  mutate(Num.Status=as.numeric(as.factor(Status)) + 1) %>% ##convert cyto to numeric and make it a different scale. 
+  
+  #HAVE TO CHANGE THIS NUM.NUP98.KDM5A!!! it was hardcoded for the factor level before Status was changed
+  mutate(Num.NUP98.KDM5A=ifelse(Status == "NUP98.KDM5A", 7, 9)) %>%
+  dplyr::select(USI,Status,Num.Status,Num.NUP98.KDM5A, everything())
+
+# table(cyto$Status, cyto$Num.Status)
+# table(cyto$Status, cyto$Num.NUP98.KDM5A)
+```
+
+
+```{r}
+cormat.final[upper.tri(cormat.final)] <- NA
+
+cormat.melt <- melt(cormat.final, na.rm = TRUE)  %>%
+  inner_join(., cyto, by=c("Var1"="USI")) %>%
+  mutate(Num.USI=as.numeric(Var1),
+         Num.pair=as.numeric(Var2)) %>%
+  dplyr::select(Var1,Var2,Status,Num.USI,Num.pair,Num.Status, everything())
+
+options(scipen = 999)
+# head(cormat.melt)
+```
+
+```{r}
+# tiff("test_cormap_numXY_.tiff", height = 10, width=10, units = "in", res=1200) #identical results with numeric X and cat X
+ggheatmap <- ggplot(cormat.melt, aes(Num.USI, Num.pair, fill = value))+
+ 
+ geom_raster() +
+  
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab",  
+    name="Pearson\nCorrelation") +
+  
+  theme_minimal() + # minimal theme
+  theme(
+        # axis.text.x = element_text(angle = 45, vjust = 1, size = 1, hjust = 1),
+        # axis.text.y = element_text(angle = 45, vjust = 1, size = 1, hjust = 1),
+        # axis.title.x = element_blank(),
+        # axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank()) +
+  
+  coord_fixed()
+
+# ggheatmap
+# dev.off()
+```
+
+
+cc.1031 <- c("DEK.NUP214"="#4DAF4A", 
+             "inv.16"="#E41A1C",
+             "KMT2A"="#377EB8", 
+             "NPM1"="#FFFF33",
+             "NUP98.KDM5A"="#984EA3", 
+             "NUP98.NSD1"="#FF7F00",
+             "t.8.21"="#A65628", 
+             "OtherAML"="grey", 
+             "Normal"="blue")
+```{r}
+cc.1031A <- c("DEK.NUP214"="#4DAF4A", 
+             "inv.16"="#E41A1C",
+             "KMT2A"="#377EB8", 
+             "NPM1"="blue4",
+             "NUP98.KDM5A"="#984EA3", 
+             "NUP98.NSD1"="#FF7F00",
+             "t.8.21"="#A65628", 
+             "OtherAML"="#FFFF33",
+             "Normal"="chartreuse") %>%
+  .[order(names(.))]
+
+cc.1031B <- c("DEK.NUP214"="#4DAF4A", 
+             "inv.16"="#E41A1C",
+             "KMT2A"="#377EB8", 
+             "NPM1"="#FFFF33",
+             "NUP98.KDM5A"="#984EA3", 
+             "NUP98.NSD1"="#FF7F00",
+             "t.8.21"="#A65628", 
+            "OtherAML"="lavender",
+             "Normal"="chartreuse")%>%
+  .[order(names(.))]
+
+```
+
+
+```{r warning=FALSE, fig.height=16, fig.width=16}
+# tiff("NUP98.KDM5A_vsOtherAML_DEGs_Sample_corrplot_yellow.tiff", height = 16, width = 16, res=1200, units="in")
+ggheatmap +
+  #shape 124 is a line or pipe shape, 95 is a dash
+  geom_jitter(data = subset(cormat.melt, Num.USI==Num.pair),
+            mapping = aes(x=Num.USI-20, y=Num.pair, color=Num.Status), size=20, shape=95)+  
+  geom_jitter(data = subset(cormat.melt, Num.USI==Num.pair),
+            mapping = aes(x=Num.USI-75, y=Num.pair, color=Num.NUP98.KDM5A), size=20, shape=95)+  
+  
+  scale_color_gradientn(colors = cc.1031A) +
+  scale_x_reverse() +
+  labs(x="AML Samples", y="AML Samples") +
+  theme(axis.title  = element_text(size=40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        legend.key.size = unit(50, units = "points"),
+        legend.text = element_text(size=25),
+        legend.title = element_text(size=30))
+# 
+# dev.off()
+```
+
+
+```{r warning=FALSE, fig.height=16, fig.width=16}
+# tiff("NUP98.KDM5A_vsOtherAML_DEGs_Sample_corrplot_lavender.tiff", height = 16, width = 16, res=1200, units="in")
+ggheatmap +
+  #shape 124 is a line or pipe shape, 95 is a dash
+  geom_jitter(data = subset(cormat.melt, Num.USI==Num.pair),
+            mapping = aes(x=Num.USI-20, y=Num.pair, color=Num.Status), size=20, shape=95)+  
+  geom_jitter(data = subset(cormat.melt, Num.USI==Num.pair),
+            mapping = aes(x=Num.USI-75, y=Num.pair, color=Num.NUP98.KDM5A), size=20, shape=95)+  
+  scale_color_gradientn(colors = cc.1031B) +
+  scale_x_reverse() +
+  labs(x="AML Samples", y="AML Samples") +
+  theme(axis.title  = element_text(size=40),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        legend.key.size = unit(50, units = "points"),
+        legend.text = element_text(size=25),
+        legend.title = element_text(size=30))
+# 
+# dev.off()
+```
+
+
+```{r fig.height=2.5, fig.width=7}
+# tiff("Color_Barplot_yellow.tiff", height = 2.5, width=7, units="in", res=200)
+par(cex.lab=0.5, cex=1, mar=c(8,2,2,2))
+barplot(rep(1,9), col=cc.1031A, 
+        names.arg = names(cc.1031A), 
+        yaxt="n", las=2) 
+# dev.off()
+```
+
+```{r fig.height=2.5, fig.width=7}
+# tiff("Color_Barplot_lavender.tiff", height = 2.5, width=7, units="in", res=200)
+par(cex.lab=0.5, cex=1, mar=c(8,2,2,2))
+barplot(rep(1,9), col=cc.1031B, 
+        names.arg = names(cc.1031B), 
+        yaxt="n", las=2) 
+# dev.off()
+```
+
+```{r}
+table(cyto$Status, cyto$Num.Status)
+```
+
+```{r}
+# write.csv(table(cyto$Status), "1031_Cytogroups_forCorr_Heatmap.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,253 @@
+---
+title: 'NUP98-KDM5A vs Other AMLs in AAML1031'
+author: "Jenny Smith"
+date: "October 15, 2018"
+output: html_document
+---
+
+#Set-up
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height=5, fig.width=8,dpi = 600)
+knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2017.07.13_NUP98KDM5A_DEGs/')
+options(stringsAsFactors = FALSE)
+```
+
+```{r message = FALSE, warning=FALSE, echo=FALSE}
+library(stringr)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(captioner)
+figs <- captioner(prefix = "Figure")
+```
+
+```{r}
+source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/Heatmaps_Function.r")
+```
+
+
+#Read in the CDEs
+
+```{r}
+CDE <- read.csv("~/reference_mapping-files/TARGET_AML_0531_1031_merged_CDEs_1.10.19.csv")
+
+CDE <- CDE %>%
+  filter(!is.na(USI)) %>%
+  set_rownames(.$USI)
+
+dim(CDE)
+```
+
+
+#Read in the Heatmaps
+
+```{r}
+annotation <- readRDS("Figures/TARGET_AML_1031_NUP98.KDM5A_vs_OtherAML_Heatmap_Anno.RDS")
+```
+
+```{r echo=FALSE}
+heatmaps <- readRDS("Figures/TARGET_AML_1031_NUP98.KDM5A_vs_OtherAML_Heatmaps.RDS")
+summary(heatmaps)
+```
+
+
+#Heatmaps
+
+```{r echo=FALSE, fig.cap="All differentially expressed genes. Adj. p < 0.05, 2,252 genes"}
+heatmaps[[1]]
+# figs(name="h1", "All differentially expressed genes. Adj. p < 0.05, 2,252 genes")
+```
+
+```{r echo=FALSE, fig.cap="50th Percentile of lowest p-values. Adj. p < 1e-03, 1051 genes"}
+heatmaps[[2]]
+# figs(name="h2", "50th Percentile of lowest p-values. Adj. p < 1e-03, 1051 genes")
+```
+
+```{r echo=FALSE, fig.cap="20th Percentile of lowest p-values. Adj. p < 1e-06, 387 genes"}
+heatmaps[[3]]
+# figs(name="h3", "20th Percentile of lowest p-values. Adj. p < 1e-06, 387 genes")
+```
+
+```{r echo=FALSE,fig.cap="10th Percentile of lowest p-values. Adj. p < 1e-08, 206 genes"}
+heatmaps[[4]]
+# figs(name="h3", "10th Percentile of lowest p-values. Adj. p < 1e-08, 206 genes")
+```
+
+```{r echo=FALSE,fig.cap="75th Percentile of absolute value log2 fold-changes. abs(FC) >= 2.3, 563 genes"}
+heatmaps[[5]]
+# figs(name="h4", "75th Percentile of absolute value log2 fold-changes. abs(FC) >= 2.3, 563 genes")
+```
+
+```{r echo=FALSE, fig.cap="90th Percentile of absolute value log2 fold-changes. abs(FC) >= 3.3, 225 genes"}
+# tiff("TARGET_AML_1031_NUP98.KDM5A_vs_OtherAML_90thPercentile_logFC_Heatmap.tiff", height=5, width=8, units="in", res=600)
+heatmaps[[6]]
+# dev.off()
+# figs(name="h5", "90th Percentile of absolute value log2 fold-changes. abs(FC) >= 3.3, 225 genes")
+```
+
+
+
+#Select NUP98-KDM5A like group
+
+
+```{r}
+library(ComplexHeatmap)
+```
+
+```{r}
+DEGs <- get(load("TARGET_AML_NUP98.KDM5A_vs_OtherAML_DEGs_List.RData"))
+
+table(annotation$anno.df$Var1 )
+```
+
+```{r fig.height=3, fig.width=16}
+KDM5A.d <- column_dend(heatmaps[[6]])
+
+pheno <- annotation$anno.df$Var1 %>%
+  ifelse(!grepl("NUP98.KDM5A", .), "OtherAML", .) %>%
+  set_names(annotation$anno.df$USI)
+
+table(pheno)
+# str(KDM5A.d) #OK 
+# plot(KDM5A.d)
+```
+
+```{r}
+d.groups <- colorDends_Groups(dendrogram=KDM5A.d, 
+                              phenovector=pheno,
+                              colorcodes = c("NUP98.KDM5A"="darkorchid4", "OtherAML"="lavender"),
+                              h=100)
+```
+
+```{r fig.height=3, fig.width=16}
+# tiff("NUP98.KDM5A_vs_OtherAML_ColorDend.tiff", height = 4, width = 16, units = "in", res=300)
+par(mfrow=c(1,1), cex=0.1, mar=c(6.5, 7.5, 8.5, 2), pty="m")
+plot(d.groups$dend,
+     xlab = " ", ylab=" ",  main=" ",
+     axes=TRUE,
+     type = "rectangle",
+     cex.axis=10,
+     horiz = FALSE)
+par(cex=0.8, cex.main = 1, cex.lab = 0.85)
+# dev.off()
+```
+
+
+```{r fig.height=3, fig.width=10}
+par(mfrow=c(1,1), cex=0.6, mar=c(4.5, 4.5, 4.5, 2), pty="m")
+plot(d.groups$split_dends[[5]],
+     xlab = " ", ylab=" ",  main=" ",
+     axes=TRUE,
+     type = "rectangle",
+     cex.axis=1.2,
+     horiz = FALSE)
+par(cex=0.8, cex.main = 1, cex.lab = 0.85)
+```
+
+
+```{r fig.height=3, fig.width=10}
+par(mfrow=c(1,1), cex=0.75, mar=c(4.5, 4.5, 4.5, 2), pty="m")
+plot(d.groups$split_dends[[6]],
+     xlab = " ", ylab=" ",  main=" ",
+     axes=TRUE,
+     type = "rectangle",
+     cex.axis=1.2,
+     horiz = FALSE)
+par(cex=0.8, cex.main = 1, cex.lab = 0.85) #only 12 
+```
+
+
+```{r}
+
+```
+
+
+
+##Clinical Characteristics of the NUP98.KDM5A  
+
+```{r message=FALSE}
+library(compareGroups)
+```
+
+```{r}
+TP <- pheno[pheno=="NUP98.KDM5A"]
+TP
+```
+
+```{r}
+df <- data.frame(NUP98.KDM5A_Group_Number=d.groups$groups, 
+                 USI=unlist(d.groups$group_labels)) %>%
+  
+  left_join(., CDE, by="USI") %>%
+  select(USI,Reg., ISCN, NUP98.KDM5A_Group_Number,
+         Age.Category, Age.Yrs,
+         Gender, Race, Ethnicity, 
+         WBC.at.Diagnosis, Bone.marrow.leukemic.blast.percentage...., Peripheral.blasts....,
+         EMD=Was.the.patient.diagnosed.with.non.CNS.extramedullary.disease.,CNS=CNS.disease.at.on.study,
+         Risk.group,Primary.Cytogenetic.Code,
+         NPM.mutation, CEBPA.mutation,FLT3.ITD.positive.,
+         FAB_or_WHO.Classification, RAM.phenotype,
+         matches("^t.|^inv|^del|^MLL$|^mono|^Minus"), 
+         M6_AML, M7_AML,CBFA2T3.GLIS2,
+         matches("^ETS|^ERG|^FEV|^ETV6|FEV"),
+         matches("DEK|KDM5A|NSD1|RBM15"), 
+         matches("MRD\\.|CR.status")) %>%
+  
+  mutate_at(vars(NUP98.KDM5A),
+            funs(ifelse(USI %in% names(TP), "Yes", "No"))) %>%
+  mutate_all(funs(ifelse(.=="Intermediate", "Yes", .))) %>%
+  
+  #Needs to be updated in the master copy. 
+  mutate_at(vars(Risk.group), funs(gsub(" ","", .))) %>%
+  mutate_at(vars(Primary.Cytogenetic.Code), funs(gsub("^$", "Unknown", .))) %>%
+  
+  
+  mutate(EMD=gsub("\\.", "Unknown", EMD), 
+         NUP98.KDM5A.like=case_when(
+           NUP98.KDM5A == "Yes" ~ "NUP98.KDM5A",
+           NUP98.KDM5A_Group_Number==6 & NUP98.KDM5A != "Yes" ~ "NUP98.KDM5A-like",
+           NUP98.KDM5A_Group_Number!=6 & NUP98.KDM5A != "Yes" ~ "No")) 
+
+head(df[,1:10])
+dim(df)
+
+# table(df$NUP98.KDM5A.like, useNA = "always")
+```
+
+```{r}
+table(df$NUP98.KDM5A_Group_Number, df$NUP98.KDM5A, useNA="always")
+table(df$NUP98.KDM5A.like, useNA="always")
+table(df$Protocol)
+```
+
+```{r warning=FALSE}
+comp.all <- compareGroups(NUP98.KDM5A.like ~ ., 
+                          method=4, 
+                          Q1=0, Q3=1, 
+                          ref.no="No",
+                          data = df[,-c(1:4)])
+
+```
+
+```{r}
+tab.all <- createTable(comp.all)
+# export2csv(tab.all,"TARGET_AML_RBD_NUP98.KDM5A_Cluster_vs_OtherAML_ClinChars_Table.csv")
+
+tab.all
+```
+
+
+
+
+
+
+
+#Session Information 
+
+```{r}
+sessionInfo()
+```
+

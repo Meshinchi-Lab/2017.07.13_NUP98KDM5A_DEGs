@@ -1,0 +1,322 @@
+---
+title: 'KDM1A Expression in Ribodepleted RNAseq'
+author: "Jenny Smith"
+date: "April 16, 2019"
+output: html_document
+---
+
+#Set-Up
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height=5, fig.width=8, dpi = 600)
+knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2017.07.13_NUP98KDM5A_DEGs/')
+options(stringsAsFactors = FALSE)
+options(expressions = 500000)
+```
+
+```{r message = FALSE, warning=FALSE}
+library(stringr)
+library(magrittr)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(DeGSEA) #my custom build R package that used to be imported through `source()` 
+library(pheatmap)
+library(RColorBrewer)
+getwd()
+```
+
+```{r}
+source("~/scripts/survival_analysis/Survplot_Functions_2018.10.24.r")
+```
+
+
+
+#Read in the Clinical Data
+
+```{r}
+merged <- read.csv("~/reference_mapping-files/TARGET_AML_0531_1031_merged_CDEs_3.01.19.csv")
+
+
+merged <- merged %>% 
+  filter(!is.na(USI)) %>% 
+  set_rownames(.$USI)
+
+head(merged[,1:5])
+dim(merged)
+```
+
+```{r}
+manifest <- read.csv("/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/SequencingDataMatrix/TARGET_AML_0531_1031_miRNAseq_Ribodepletion_mRNAseq_Manifest_v4.csv")
+manifest <- filter(manifest, Replicate != "Replicate")
+head(manifest)
+dim(manifest)
+```
+
+```{r}
+all_fusions <- read.csv("/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/level2/fusion/concat_matrices/2017July_BCCA_0531_1031_TransAbyss_STAR_K.Mungall_Combined_Illumina_data/TARGET_AML_0531_1031_TransAbyss_STAR_TargetedAlignment_Condensed_Fusion_Columns_4.15.19.csv") %>% 
+  mutate(USI=str_split_fixed(Patient, "\\.", n=5)[,3]) %>% 
+  filter(!grepl("replicate|sorted", Patient, ignore.case = T))
+
+
+head(all_fusions)
+dim(all_fusions) #999  10
+```
+
+
+#Read in the counts
+
+```{r}
+TPM <- readRDS("/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/level3/transcript/concat_matrices/2017July_BCCA_1031_Kallisto_GRCh38_Illumina_data/TARGET_AML_RBD_Kallisto_Quant_GeneLevel_TPM.RDS")
+
+head(TPM[,c(1:5,1460:1462)])
+dim(TPM) #1462 samples
+```
+
+
+#Select KDM1A Expression and Define Cohorts
+
+```{r}
+KDM1A <- TPM["ENSG00000004487",] %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("USI") %>% 
+  select(USI, KDM1A_TPM=ENSG00000004487.16) %>%
+  mutate(log2_KDM1A_TPM=log2(KDM1A_TPM +1)) %>%
+  
+  left_join(., select(manifest, USI, Reg.),
+            by="USI") %>% 
+  left_join(., merged %>% mutate(Reg.=as.character(Reg.)),
+            by="Reg.") %>%
+  select(USI=USI.x, everything()) %>%
+  left_join(., select(all_fusions, USI, FOI), 
+            by="USI") %>% 
+  
+  mutate(Group=ifelse(grepl("^BM|^RO", USI), "NBM", "AML")) %>%
+  mutate_at(vars("Rare.Fusions","Cytogenetic.Category.1", "SNVs","M7_AML"),
+            funs(ifelse(Group=="NBM", "NBM", .))) %>%
+  mutate_at(vars("SNVs"),funs(ifelse(is.na(.), "Unknown", .))) %>% 
+  mutate_at(vars("M7_AML"),funs(ifelse(is.na(.), "Unknown", .))) %>%
+  mutate(FOI=gsub("-", "\\.", FOI)) %>% 
+  mutate_at(vars("Rare.Fusions"),
+            funs(case_when(
+              is.na(.) & FOI %in% unique(merged$Rare.Fusions)~ FOI,
+              . == "OtherAML" & FOI %in% unique(merged$Rare.Fusions)~ FOI,
+              is.na(.) ~ "Unknown",
+              TRUE ~ .))) %>%
+  mutate_at(vars(Cytogenetic.Category.1),
+            funs(case_when(
+              is.na(.) & grepl("KMT2A", FOI) ~ "MLL", 
+              is.na(.) & grepl("CBFB.MYH11", FOI) ~ "inv.16", 
+              is.na(.) & grepl("RUNX1.RUNX1T1", FOI) ~ "t.8.21.",
+              is.na(.) ~ "Unknown", 
+              TRUE ~ .))) #%>% 
+  # filter(is.na(M7_AML))
+  
+
+
+head(KDM1A[,1:5])
+dim(KDM1A)
+```
+
+```{r}
+table(KDM1A$Group)
+table(KDM1A$Rare.Fusions, useNA = "always")
+table(KDM1A$Cytogenetic.Category.1, useNA ="always")
+table(KDM1A$SNVs)
+table(KDM1A$M7_AML,  useNA ="always")
+```
+
+
+#Histogram
+
+```{r}
+quantile(KDM1A[KDM1A$Group=="AML","KDM1A_TPM"])
+quantile(KDM1A[KDM1A$Group=="NBM","KDM1A_TPM"])
+
+```
+
+
+```{r}
+hist(KDM1A[KDM1A$Group=="AML","KDM1A_TPM"], breaks = seq(0, max(KDM1A$KDM1A_TPM)+5, by=5), col="turquoise", main = "KDM1A Expression in \n Pediatric AML and NBM Controls")
+hist(KDM1A[KDM1A$Group=="NBM","KDM1A_TPM"], breaks = seq(0, max(KDM1A$KDM1A_TPM)+5, by=5), col="darkgrey", main = NULL, add=TRUE)
+abline(v=median(KDM1A$KDM1A_TPM), col="black", lwd=4,lty=2)
+legend(x=100, y=200, legend = c("AML", "NBM"), col=c("turquoise","darkgrey"), pch=15)
+
+```
+
+
+
+
+#Waterfall plot 
+
+```{r}
+w.fus <- ggbarplot(KDM1A, x="USI", y="KDM1A_TPM",
+          fill="Rare.Fusions",
+          color="Rare.Fusions",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE) +
+  theme(axis.text.x = element_blank(), 
+        plot.margin=unit(c(0,0,2,0), units = "cm"), 
+        text = element_text(size=12.25))
+w.fus
+```
+
+```{r}
+w.main <- ggbarplot(KDM1A, x="USI", y="KDM1A_TPM",
+          fill="Cytogenetic.Category.1",
+          color="Cytogenetic.Category.1",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE) +
+  theme(axis.text.x = element_blank(), 
+        plot.margin=unit(c(0,0,1.25,0), units = "cm"), 
+        text = element_text(size=12.25))
+
+# w.main
+```
+
+
+```{r}
+w.snv <- ggbarplot(KDM1A, x="USI", y="KDM1A_TPM",
+          fill="SNVs",
+          color="SNVs",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE) +
+  theme(axis.text.x = element_blank(), 
+        plot.margin=unit(c(0,0,2.25,0), units = "cm"),
+        text = element_text(size=12.25))
+
+# w.snv
+```
+
+```{r}
+w.m7 <- ggbarplot(KDM1A, x="USI", y="KDM1A_TPM",
+          fill="M7_AML",
+          color="M7_AML",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE) +
+  theme(axis.text.x = element_blank(), 
+        plot.margin=unit(c(0,0,2.25,0), units = "cm"),
+        text = element_text(size=12.25))
+# w.m7
+```
+
+
+#Violin Plots 
+
+```{r}
+v.fus <- ggviolin(KDM1A, x="Rare.Fusions", y="log2_KDM1A_TPM",
+          fill="Rare.Fusions",
+          color="darkgrey",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE, 
+          add = c("boxplot"), 
+          add.params = list(size=0.25), 
+          x.text.angle=20) +
+  theme(text = element_text(size=12.25))
+  # guide_legend(ncol = 4, nrow = 3)
+  
+
+# v.fus
+```
+
+```{r}
+v.main <- ggviolin(KDM1A, x="Cytogenetic.Category.1", y="log2_KDM1A_TPM",
+          fill="Cytogenetic.Category.1",
+          color="darkgrey",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE, 
+          add = c("boxplot"), 
+          add.params = list(size=0.25), 
+          x.text.angle=20) + 
+  theme(text = element_text(size=12.25))
+  
+
+# v.main
+```
+
+```{r}
+v.snv <- ggviolin(KDM1A, x="SNVs", y="log2_KDM1A_TPM",
+          fill="SNVs",
+          color="darkgrey",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE, 
+          add = c("boxplot"), 
+          add.params = list(size=0.25), 
+          x.text.angle=20) + 
+  theme(text = element_text(size=12.25))
+  
+
+# v.snv
+```
+
+
+```{r}
+my_comparisons <- list( c("No", "Yes"),
+                        c("NBM", "Yes"))
+v.m7 <- ggviolin(KDM1A, x="M7_AML", y="log2_KDM1A_TPM",
+          fill="M7_AML",
+          color="darkgrey",
+          palette = "jco",
+          sort.val = "asc",
+          sort.by.groups = TRUE, 
+          add = c("boxplot"), 
+          add.params = list(size=0.25), 
+          x.text.angle=20) + 
+  theme(text = element_text(size=12.25)) 
+  # stat_compare_means(comparisons = my_comparisons, method = "wilcox.test")
+
+v.m7
+```
+
+```{r}
+df <- select(KDM1A,log2_KDM1A_TPM,KDM1A_TPM, M7_AML) %>% 
+  filter(M7_AML != "Unknown") %>% 
+  group_by(M7_AML) %>% 
+  summarize(median=median(log2_KDM1A_TPM), 
+            median.norm=median(KDM1A_TPM))
+df
+```
+
+
+
+#Combine Together 
+
+```{r}
+library(gridExtra)
+```
+
+
+```{r fig.height=8, fig.width=8.5}
+ml <- marrangeGrob(grobs = list(w.fus, v.fus, w.main, v.main, w.snv, v.snv, w.m7, v.m7),
+             ncol=1, nrow=2)
+
+ml
+ggsave("TARGET_AML_KDM1A_Expression_plots.pdf",ml, height = 8, width = 8.5)
+# getwd()
+```
+
+```{r fig.height=6, fig.width=6.5}
+m7 <- marrangeGrob(grobs = list(w.m7, v.m7),
+             ncol=1, nrow=2)
+
+m7
+```
+
+
+#Session Information 
+
+```{r}
+sessionInfo()
+```
+
