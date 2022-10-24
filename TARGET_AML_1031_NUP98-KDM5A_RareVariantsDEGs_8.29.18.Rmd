@@ -11,9 +11,8 @@ Purpose: Investigate the NUP98-KDM5A transcriptional profile in Pediatric AML
 ```{r setup}
 library(knitr)
 knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),tidy=TRUE, fig.align='center', fig.height = 8, fig.width = 10)
-knitr::opts_knit$set(root.dir = '/fh/fast/meshinchi_s/workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/2017.07.13_NUP98KDM5A_DEGs/')
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
 ```
-
 
 ```{r message=FALSE}
 library(dplyr)
@@ -24,16 +23,42 @@ library(tidyr)
 library(tibble)
 library(ggpubr)
 library(colorspace)
+library(DeGSEA)
 getwd()
+```
+
+```{r}
+# Define File/Data Locations
+host <- Sys.info()[["nodename"]]
+if(grepl("gizmo", host)){
+  FASTDRIVE <- "/fh/fast/meshinchi_s"
+}else{
+  FASTDRIVE <- "/Users/jsmi26/fast_drive" #/fh/fast/meshinchi_s on the Fred Hutch HPC
+}
+
+RPROJ <- list(PROJHOME=normalizePath(file.path(FASTDRIVE,"workingDir/TARGET/AML_TARGET/RNA/mRNAseq/analysis/")),
+              CDE=normalizePath(file.path(FASTDRIVE, "workingDir/TARGET/AML_TARGET/Clinical/CDE/")),
+              GENREFS=normalizePath(file.path(FASTDRIVE, "workingDir/TARGET/Reference_Data/")),
+              TARGET=normalizePath(file.path(FASTDRIVE, "workingDir/TARGET/AML_TARGET/")),
+              REFS=normalizePath(file.path(FASTDRIVE, "workingDir/0_For_Soheil/jlsmith3/reference_mapping-files/")),
+              HOME=normalizePath(file.path(FASTDRIVE,"workingDir/0_For_Soheil/jlsmith3/RNA_seq_Analysis/")),
+              SCRIPTS=normalizePath(file.path(FASTDRIVE,"workingDir/0_For_Soheil/jlsmith3/github_repos/")),
+              WORKINGDIR=normalizePath(file.path(FASTDRIVE,"workingDir/")))
+
+attach(RPROJ)
+rm(RPROJ)
+
+PROJHOME <- file.path(PROJHOME,"2017.07.13_NUP98KDM5A_DEGs")
 ```
 
 
 ```{r}
-source("~/scripts/RNAseq_Analysis/Waterfallplots/Waterfall_Barplot_Function_2017.05.22.r")
-# source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline.r")
-source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline_7.05.18.r")
+# source("~/scripts/RNAseq_Analysis/Waterfallplots/Waterfall_Barplot_Function_2017.05.22.r")
+# # source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline.r")
+# source("~/scripts/RNAseq_Analysis/DifferentialExpn_PathwayAnalysis/DifferentialExpressionPipeline_7.05.18.r")
 ```
 
+# Define Functions 
 
 ```{r}
 splitFusions <- function(FusionName,regex){
@@ -95,10 +120,10 @@ getFusionCounts <- function(fusions,counts,regex,pattern=";"){
 ```
 
 
-#Read in the CDEs
+# Read in the CDEs
 
 ```{r}
-CDE.0531 <- read.csv("~/reference_mapping-files/TARGET_AML_current_asof_june30_2016_UPDATED_CLEAN_4.19.18.csv",
+CDE.0531 <- read.csv(file.path(REFS, "00_Archive/00_Old/TARGET_AML_current_asof_june30_2016_UPDATED_CLEAN_4.19.18.csv"),
                      stringsAsFactors = FALSE)
 
 # dim(CDE.0531)s
@@ -120,37 +145,42 @@ DetectionType <- CDE.0531 %>%
 # write.csv(DetectionType, "TARGET_AML_0531_NUP98.KDM5A_DetectionMethods.csv", row.names = FALSE)
 ```
 
-
-
 ```{r}
-# CDE.1031 <- read.csv("~/reference_mapping-files/TARGET_AML_1031_CDE_cleaned_7.06.2018.csv",
-#                      stringsAsFactors = FALSE)
-# colnames(CDE.1031)[grep("^NUP98.KDM5A", colnames(CDE.1031))] <- "NUP98.KDM5A"
-
-CDE.1031 <- read.csv("~/reference_mapping-files/AAML1031_Target_CDEs_with_HiAR_and_PrimaryCyto_withFusionCalls_10.11.2018.csv",
+CDE.1031 <- read.csv(file.path(REFS, "00_Archive/00_Old/older_versions/TARGET_AML_1031_CDE_cleaned_7.06.2018.csv"),
                      stringsAsFactors = FALSE)
+colnames(CDE.1031)[grep("^NUP98.KDM5A", colnames(CDE.1031))] <- "NUP98.KDM5A"
+colnames(CDE.1031)[grep("^NUP98.NSD1", colnames(CDE.1031))] <- "NUP98.NSD1"
+# CDE.1031 <- read.csv(file.path(REFS, "00_Archive/00_Old/AAML1031_Target_CDEs_with_HiAR_and_PrimaryCyto_withFusionCalls_10.11.2018.csv"),
+#                      stringsAsFactors = FALSE)
 
 CDE.1031 <- filter(CDE.1031, !is.na(USI)) #1149 without NAs
 rownames(CDE.1031) <- CDE.1031$USI
 
 head(CDE.1031[,1:5])
-# dim(CDE.1031)#1223 by 199
+dim(CDE.1031)
 ```
-
 
 ```{r}
 # table(CDE.1031$CBFA2T3.GLIS2)
 table(CDE.1031$ScreenedForFusion)
 table(CDE.1031$NUP98.KDM5A)
-# table(CDE.1031$NUP98.NSD1)
+table(CDE.1031$NUP98.NSD1)
 # table(CDE.1031$NUP98.Fusions)
 ```
 
+```{r}
+CDE.1031 %>% 
+  select(USI,NUP98.NSD1, NUP98.KDM5A) %>% 
+  arrange(desc(NUP98.KDM5A), desc(NUP98.NSD1)) %>% 
+  filter(NUP98.KDM5A!="Unknown") %>% 
+  # write.csv(., file.path(PROJHOME,"Sanne_Noort_RNA-seq_Sample_Manifest.csv"), row.names = F)
+```
 
-#Read in the expression data
+
+# Read in the expression data
 
 ```{r}
-HD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_TPM_Aug2014.csv", 
+HD.0531 <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_TPM_Aug2014.csv"), 
                         stringsAsFactors = FALSE, row.names = 1)
 
 colnames(HD.0531) <- str_split_fixed(colnames(HD.0531), "\\.", n=5)[,3]
@@ -158,25 +188,24 @@ head(HD.0531[,1:5])
 # dim(HD.0531) #160 samples adn 51,482 genes
 ```
 
-
 ```{r}
-LD.0531 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_TPM.csv", stringsAsFactors = FALSE, row.names = 1)
+LD.0531 <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_TPM.csv"),
+                    stringsAsFactors = FALSE, row.names = 1)
 
 head(LD.0531[,1:5])
 # dim(LD.0531) #494 samples adn 51573 genes
 ```
 
 ```{r}
-HD.1031 <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_TPM.csv", 
+HD.1031 <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_TPM.csv"), 
                     stringsAsFactors = FALSE, row.names = 1)
 
 head(HD.1031[,1:5])
 # dim(HD.1031) #1111 samples and 51573 genes. 
 ```
 
-
 ```{r}
-HD.0531.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_FractionalCounts_Aug2014.csv",
+HD.0531.cts <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_DxSamples_dupGenesRemoved_FractionalCounts_Aug2014.csv"),
                         stringsAsFactors = FALSE,
                         row.names = 1)
 
@@ -186,7 +215,7 @@ head(HD.0531.cts[,1:5])
 ```
 
 ```{r}
-LD.0531.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_FractionalCounts.csv",
+LD.0531.cts <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_AAML0531_dupGenesRemoved_FractionalCounts.csv"),
                         stringsAsFactors = FALSE,
                         row.names = 1)
 
@@ -194,7 +223,7 @@ head(LD.0531.cts[,1:5])
 ```
 
 ```{r}
-HD.1031.cts <- read.csv("~/RNA_seq_Analysis/0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_FractionalCounts.csv",
+HD.1031.cts <- read.csv(file.path(HOME,"0000.00.03_Expression_Matrices/TARGET_AML_AAML1031_dupGenesRemoved_FractionalCounts.csv"),
                         stringsAsFactors = FALSE,
                         row.names = 1)
 
@@ -203,7 +232,7 @@ head(HD.1031.cts[,1:5])
 ```
 
 
-#Differential Expression Analysis 
+# Differential Expression Analysis 
 
 ```{r}
 CDEs <- list(CDE.0531, CDE.0531, CDE.1031)
@@ -224,8 +253,11 @@ names(cts) <- c("HD.0531.cts", "LD.0531.cts", "HD.1031.cts")
 ```
 
 
-#DEGs in 1031 
+# DEGs in 1031 
 
+```{r}
+table(CDE.1031$USI %in% colnames(HD.1031.cts))
+```
 
 Running with Limma Voom and updated to include protien localization Anno and TM helix information from Ensemble BiomaRt. 
  
@@ -237,6 +269,11 @@ DEGs.1031 <- twoGroups_DEGs(expnData = cts$HD.1031.cts,
                             ref = "No")
 # dev.off()
 # saveRDS(DEGs.1031, "TARGET_AML_1031_NUP98.KDM5A_vs_otherAML_voom_8.27.18.RDS")
+```
+
+```{r}
+CDEs$CDE.1031 %>% 
+  select(USI, NUP98.K)
 ```
 
 ```{r}
